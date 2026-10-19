@@ -1,4 +1,7 @@
 <resources>
     <string name="app_name">AI 屏幕助手</string>
     <string name="accessibility_description">用于在用户明确授权后读取当前界面并执行已确认的辅助操作。</string>
+    <string name="capture_notification_title">AI 屏幕助手正在捕获屏幕</string>
+    <string name="capture_notification_text">点按可返回应用，或使用“停止”结束录屏。</string>
+    <string name="capture_stop">停止录屏</string>
 </resources>

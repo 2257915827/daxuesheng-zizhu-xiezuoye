@@ -15,6 +15,12 @@ Android 10–16 的内部测试 MVP。当前包含：
 - 可替换的云端 `AiClient` / HTTP multipart 适配器
 - 默认不持久化屏幕内容，停止时清理临时截图
 
+## 配置 OpenAI-compatible API
+
+在应用的“OpenAI 兼容 API”区域填写服务根地址或已带 `/v1` 的地址、Token，然后点击“拉取模型”。从返回的模型中搜索并选择支持图像输入的模型，点击“保存”，最后可使用“测试连接”验证 `/v1/models` 是否可用。
+
+应用会自动把 `https://example.com` 规范化为 `https://example.com/v1`。请求使用 `Authorization: Bearer <Token>`、`GET /v1/models` 和 `POST /v1/chat/completions`；错误信息会直接显示在配置区域。
+
 ## 构建
 
 使用 Android Studio 打开项目根目录，安装 Android SDK 35 后执行 `app` 的 debug 构建。当前环境没有 Gradle 命令或 Gradle Wrapper，因此无法在此工作区直接执行编译。
