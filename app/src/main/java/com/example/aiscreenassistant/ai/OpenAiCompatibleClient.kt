@@ -2,9 +2,10 @@ package com.example.aiscreenassistant.ai
 
 import android.graphics.Bitmap
 import android.util.Base64
-import com.example.aiscreenassistant.model.AiResponse
-import com.example.aiscreenassistant.model.ScreenContext
+import com.example.aiscreenassistant.model.QuestionAnswer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -17,22 +18,28 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class ApiException(message: String) : Exception(message)
 
-class OpenAiCompatibleClient(baseUrl: String, private val token: String, private val model: String) : AiClient {
+class OpenAiCompatibleClient(baseUrl: String, private val token: String, private val model: String) {
     private val baseUrl = normalizeBaseUrl(baseUrl)
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
-    private val http = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
+    private val http = OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).build()
 
     suspend fun listModels(): List<String> = withContext(Dispatchers.IO) {
         val request = Request.Builder().url("$baseUrl/models").header("Authorization", "Bearer $token").get().build()
-        execute(request) { body -> parseModels(body) }
+        execute(request) { parseModels(it) }
     }
 
     suspend fun testConnection(selectedModel: String?): ConnectionResult = withContext(Dispatchers.IO) {
@@ -40,52 +47,65 @@ class OpenAiCompatibleClient(baseUrl: String, private val token: String, private
         ConnectionResult(models.size, selectedModel.isNullOrBlank() || selectedModel in models)
     }
 
-    override suspend fun analyzeScreen(bitmap: Bitmap, context: ScreenContext): AiResponse = chat(bitmap, context, "识别屏幕上的当前作业题目和选项。若题目尚未完成，选择一个最佳选项并只返回一个 SELECT_OPTION 动作；target 必须是屏幕中选项的准确文本或可访问节点 id。答案选中后若页面明确有“下一题/继续答题”按钮，可返回 NEXT_QUESTION；长页面可返回 SCROLL。只允许 SELECT_OPTION、NEXT_QUESTION、SCROLL、WAIT，绝不可提交、发送、输入文本、点击提交或执行其他操作。若已没有未完成题目，taskComplete=true。只输出符合 AiResponse JSON 结构的 JSON：explanation、answer、confidence、taskComplete、actions；每个动作含 type、target、reason、confidence。")
-    override suspend fun createActionPlan(bitmap: Bitmap, context: ScreenContext, answer: AiResponse): AiResponse = chat(bitmap, context, "基于当前页面给出一个安全的选择题选项动作。不得提交。已有答案：${answer.answer ?: answer.explanation}")
-    override suspend fun verifyAction(bitmap: Bitmap, context: ScreenContext, expected: String): Boolean = chat(bitmap, context, "判断页面是否已达到预期：$expected。只回复 true 或 false。").explanation.trim().contains("true", ignoreCase = true)
-
-    private suspend fun chat(bitmap: Bitmap, context: ScreenContext, instruction: String): AiResponse = withContext(Dispatchers.IO) {
-        val image = bitmapToDataUrl(bitmap)
-        val prompt = "$instruction\n界面包名：${context.packageName}\n可访问节点：${context.nodes.joinToString(limit = 80)}"
-        val payload = buildJsonObject {
-            put("model", JsonPrimitive(model.ifBlank { throw ApiException("未选择模型") }))
-            put("messages", buildJsonArray {
-                add(buildJsonObject {
-                    put("role", JsonPrimitive("user"))
-                    put("content", buildJsonArray {
-                        add(buildJsonObject { put("type", JsonPrimitive("text")); put("text", JsonPrimitive(prompt)) })
-                        add(buildJsonObject { put("type", JsonPrimitive("image_url")); put("image_url", buildJsonObject { put("url", JsonPrimitive(image)) }) })
+    suspend fun answerQuestion(bitmap: Bitmap): QuestionAnswer = withContext(Dispatchers.IO) {
+        try {
+            val image = bitmapToDataUrl(bitmap)
+            val prompt = "分析截图中当前最主要的一道题，只输出 JSON：{\"questionType\":\"MULTIPLE_CHOICE|FILL_IN|SHORT_ANSWER|UNKNOWN\",\"answer\":\"最终答案\",\"confidence\":0到1之间的数字,\"briefReason\":\"可为空，最多一句\"}。支持选择题、填空题、简答题；选择题答案需包含选项标号和对应内容（如 B. ...），填空或简答给出可直接参考/复制的完整答案。不要操作屏幕，不要返回操作指令；题目看不清时 answer 留空且降低 confidence。"
+            val payload = buildJsonObject {
+                put("model", JsonPrimitive(model.ifBlank { throw ApiException("未选择模型") }))
+                put("messages", buildJsonArray {
+                    add(buildJsonObject {
+                        put("role", JsonPrimitive("user"))
+                        put("content", buildJsonArray {
+                            add(buildJsonObject { put("type", JsonPrimitive("text")); put("text", JsonPrimitive(prompt)) })
+                            add(buildJsonObject { put("type", JsonPrimitive("image_url")); put("image_url", buildJsonObject { put("url", JsonPrimitive(image)) }) })
+                        })
                     })
                 })
-            })
-        }
-        val request = Request.Builder().url("$baseUrl/chat/completions").header("Authorization", "Bearer $token")
-            .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody("application/json; charset=utf-8".toMediaType())).build()
-        try {
+            }
+            val request = Request.Builder().url("$baseUrl/chat/completions").header("Authorization", "Bearer $token")
+                .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody("application/json; charset=utf-8".toMediaType())).build()
             execute(request) { body ->
                 val root = json.parseToJsonElement(body).jsonObject
                 val content = root["choices"]?.jsonArray?.firstOrNull()?.jsonObject?.get("message")?.jsonObject?.get("content")
-                val text = when (content) { is JsonPrimitive -> content.content; is JsonArray -> content.joinToString("\n") { part -> runCatching { part.jsonObject["text"]?.jsonPrimitive?.content }.getOrNull() ?: part.toString() }; else -> throw ApiException("模型未返回文本内容") }
-                val jsonStart = text.indexOf('{')
-                val jsonEnd = text.lastIndexOf('}')
-                if (jsonStart < 0 || jsonEnd <= jsonStart) throw ApiException("模型响应不是预期的 JSON 操作格式")
-                runCatching { json.decodeFromString(AiResponse.serializer(), text.substring(jsonStart, jsonEnd + 1)) }
-                    .getOrElse { throw ApiException("模型 JSON 结构无效：${it.message}") }
+                val text = when (content) {
+                    is JsonPrimitive -> content.content
+                    is JsonArray -> content.joinToString("\n") { part -> runCatching { part.jsonObject["text"]?.jsonPrimitive?.content }.getOrNull().orEmpty() }
+                    else -> throw ApiException("模型未返回答案内容")
+                }
+                parseAnswer(text)
             }
-        } finally { bitmap.recycle() }
+        } finally {
+            bitmap.recycle()
+        }
     }
 
-    private fun <T> execute(request: Request, parser: (String) -> T): T = http.newCall(request).execute().use { response ->
-        val body = response.body?.string().orEmpty()
-        if (!response.isSuccessful) throw ApiException("HTTP ${response.code}：${parseError(body)}")
-        if (body.isBlank()) throw ApiException("服务返回空响应")
-        parser(body)
+    private suspend fun <T> execute(request: Request, parser: (String) -> T): T = suspendCancellableCoroutine { continuation ->
+        val call = http.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, error: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(error)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val result = runCatching {
+                    response.use {
+                        val body = it.body?.string().orEmpty()
+                        if (!it.isSuccessful) throw ApiException("HTTP ${it.code}：${parseError(body)}")
+                        if (body.isBlank()) throw ApiException("服务返回空响应")
+                        parser(body)
+                    }
+                }
+                if (continuation.isActive) result.fold(continuation::resume, continuation::resumeWithException)
+            }
+        })
     }
 
     private fun parseError(body: String): String = runCatching { json.parseToJsonElement(body).jsonObject["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content ?: body }.getOrDefault(body).take(300)
     private fun bitmapToDataUrl(bitmap: Bitmap): String {
         val output = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, output)
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 82, output)
         return "data:image/jpeg;base64,${Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)}"
     }
 
@@ -99,6 +119,16 @@ class OpenAiCompatibleClient(baseUrl: String, private val token: String, private
         fun parseModels(body: String): List<String> {
             val root = Json { ignoreUnknownKeys = true }.parseToJsonElement(body).jsonObject
             return root["data"]?.jsonArray.orEmpty().mapNotNull { it.jsonObject["id"]?.jsonPrimitive?.contentOrNull }.distinct().sorted()
+        }
+        fun parseAnswer(content: String): QuestionAnswer {
+            val from = content.indexOf('{')
+            val to = content.lastIndexOf('}')
+            if (from < 0 || to <= from) throw ApiException("模型响应不是预期的答案 JSON")
+            val answer = runCatching { Json { ignoreUnknownKeys = true }.decodeFromString(QuestionAnswer.serializer(), content.substring(from, to + 1)) }
+                .getOrElse { throw ApiException("答案结构无效：${it.message}") }
+            if (answer.answer.isBlank()) throw ApiException("没有识别到可靠答案，请调整屏幕后重试")
+            if (answer.confidence !in 0f..1f || answer.confidence < .55f) throw ApiException("识别置信度不足，请检查题目是否完整清晰后重试")
+            return answer
         }
     }
 }

@@ -1,27 +1,27 @@
-# AI 屏幕助手
+# AI 悬浮答案助手
 
 ## 直接下载 APK
 
 [点击下载最新 APK](https://github.com/2257915827/daxuesheng-zizhu-xiezuoye/raw/refs/heads/master/app/build/outputs/apk/debug/app-debug.apk)
 
-下载后在 Android 手机上打开 APK，并允许安装未知来源应用。应用面向 Android 10+ 内部测试；首次使用时需要按提示启用无障碍并授权录屏。
+下载后在 Android 手机上打开 APK，并允许安装未知来源应用。应用面向 Android 10+ 内部测试。
 
 ## 配置 OpenAI-compatible API
 
-在“OpenAI 兼容 API”区域填写服务根地址或以 `/v1` 结尾的地址、Token，然后点击“拉取模型”。选择支持图像输入的模型，点击“保存”；“测试连接”只验证 `/v1/models` 鉴权和可用性，不调用推理接口。
+在“OpenAI 兼容 API”区域填写服务根地址或以 `/v1` 结尾的地址、Token，然后点击“拉取模型”。选择支持图像输入的模型并保存；“测试连接”只验证 `/v1/models`，不调用推理接口。
 
-例如 `https://example.com` 会规范化为 `https://example.com/v1`。请求使用 Bearer Token、`GET /models` 和多模态 `POST /chat/completions`。模型是否支持视觉输入需由用户确认。
+例如 `https://example.com` 会规范化为 `https://example.com/v1`。识题请求使用 Bearer Token 和多模态 `POST /chat/completions`。模型必须支持图像输入。
 
-## 使用辅助
+## 使用悬浮助手
 
-先保存 API 配置并选择手机上的作业应用，点击“启用无障碍并继续”。启用服务并返回后，应用会请求录屏授权；授权完成后打开所选应用并开始监测。状态区分别显示无障碍设置是否启用、服务是否连接以及录屏是否运行。
+保存 API 配置后，点“允许悬浮窗并开启助手”，在 Android 设置中允许“显示在其他应用上层”，返回后再次点开启并确认系统录屏。用户自行打开答题应用；点击屏幕边缘的 AI 气泡即可截取当前画面并请求答案。每次点击只分析一屏，不会自动点击、填写、翻页或提交。
 
-当前自动化只允许 AI 选择页面中可访问的选项、滚动和点击明确标注的“下一题/继续答题”。置信度不足、控件找不到或页面状态不明确时会暂停。它不会填写自由文本答案，也不会提交、发送或支付。AI 判断题目已完成后会询问是否结束辅助。通知栏和应用内均可停止录屏/辅助。
+选择题答案会在气泡上显示 5 秒，之后可点气泡打开答案面板；填空题和简答题会直接展开面板。面板提供“复制答案”和“再拍一题”。置信度不足或 API 出错时会显示错误并允许重试。通知栏或助手页面的“停止辅助”会移除悬浮窗并停止录屏。
 
-## 隐私与限制
+## 隐私说明
 
-截图会发送到用户配置的 API 服务进行识别；应用默认不保存截图或题目内容。请只在本人有权使用的应用和内容上启用。不同学习软件暴露给 Android 无障碍服务的控件信息可能不同，需在真机验证；若选项不可访问，助手会暂停而不会猜测点击。
+每次识题都会将当前截图发送到用户配置的 AI 服务。截图和答案只在内存中处理，默认不保存。录屏授权会在辅助运行期间持续有效，停止辅助后结束。请勿在包含密码、支付或其他敏感信息的页面使用。
 
 ## 构建
 
-使用 Android Studio 打开项目并安装项目要求的 Android SDK 与许可，然后运行 `gradle assembleDebug` 或 Android Studio 的 debug 构建。APK 路径为 `app/build/outputs/apk/debug/app-debug.apk`。
+使用 Android Studio 打开项目并安装 Android SDK 与所需许可，然后运行 `gradle assembleDebug` 或 Android Studio 的 debug 构建。APK 路径为 `app/build/outputs/apk/debug/app-debug.apk`。
