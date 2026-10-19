@@ -1,5 +1,11 @@
 # AI 屏幕助手
 
+## 直接下载 APK
+
+[点击下载最新 APK](https://github.com/2257915827/daxuesheng-zizhu-xiezuoye/raw/refs/heads/master/app/build/outputs/apk/debug/app-debug.apk)
+
+下载后在 Android 手机上打开 APK，允许安装未知来源应用即可安装。安装后需要授权录屏和无障碍服务。
+
 Android 10–16 的内部测试 MVP。当前包含：
 
 - Jetpack Compose 控制界面
