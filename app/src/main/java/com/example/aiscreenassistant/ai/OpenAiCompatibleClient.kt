@@ -40,8 +40,8 @@ class OpenAiCompatibleClient(baseUrl: String, private val token: String, private
         ConnectionResult(models.size, selectedModel.isNullOrBlank() || selectedModel in models)
     }
 
-    override suspend fun analyzeScreen(bitmap: Bitmap, context: ScreenContext): AiResponse = chat(bitmap, context, "分析当前界面中的题目，给出答案、解析与置信度。不要执行提交操作。")
-    override suspend fun createActionPlan(bitmap: Bitmap, context: ScreenContext, answer: AiResponse): AiResponse = chat(bitmap, context, "基于当前页面和已有答案，给出下一步安全的填写操作计划。不可逆操作必须标记 requiresConfirmation=true。已有答案：${answer.answer ?: answer.explanation}")
+    override suspend fun analyzeScreen(bitmap: Bitmap, context: ScreenContext): AiResponse = chat(bitmap, context, "识别屏幕上的当前作业题目和选项。若题目尚未完成，选择一个最佳选项并只返回一个 SELECT_OPTION 动作；target 必须是屏幕中选项的准确文本或可访问节点 id。答案选中后若页面明确有“下一题/继续答题”按钮，可返回 NEXT_QUESTION；长页面可返回 SCROLL。只允许 SELECT_OPTION、NEXT_QUESTION、SCROLL、WAIT，绝不可提交、发送、输入文本、点击提交或执行其他操作。若已没有未完成题目，taskComplete=true。只输出符合 AiResponse JSON 结构的 JSON：explanation、answer、confidence、taskComplete、actions；每个动作含 type、target、reason、confidence。")
+    override suspend fun createActionPlan(bitmap: Bitmap, context: ScreenContext, answer: AiResponse): AiResponse = chat(bitmap, context, "基于当前页面给出一个安全的选择题选项动作。不得提交。已有答案：${answer.answer ?: answer.explanation}")
     override suspend fun verifyAction(bitmap: Bitmap, context: ScreenContext, expected: String): Boolean = chat(bitmap, context, "判断页面是否已达到预期：$expected。只回复 true 或 false。").explanation.trim().contains("true", ignoreCase = true)
 
     private suspend fun chat(bitmap: Bitmap, context: ScreenContext, instruction: String): AiResponse = withContext(Dispatchers.IO) {
@@ -65,7 +65,12 @@ class OpenAiCompatibleClient(baseUrl: String, private val token: String, private
             execute(request) { body ->
                 val root = json.parseToJsonElement(body).jsonObject
                 val content = root["choices"]?.jsonArray?.firstOrNull()?.jsonObject?.get("message")?.jsonObject?.get("content")
-                AiResponse(explanation = when (content) { is JsonPrimitive -> content.content; is JsonArray -> content.joinToString("\n") { it.toString() }; else -> "模型未返回文本内容" })
+                val text = when (content) { is JsonPrimitive -> content.content; is JsonArray -> content.joinToString("\n") { part -> runCatching { part.jsonObject["text"]?.jsonPrimitive?.content }.getOrNull() ?: part.toString() }; else -> throw ApiException("模型未返回文本内容") }
+                val jsonStart = text.indexOf('{')
+                val jsonEnd = text.lastIndexOf('}')
+                if (jsonStart < 0 || jsonEnd <= jsonStart) throw ApiException("模型响应不是预期的 JSON 操作格式")
+                runCatching { json.decodeFromString(AiResponse.serializer(), text.substring(jsonStart, jsonEnd + 1)) }
+                    .getOrElse { throw ApiException("模型 JSON 结构无效：${it.message}") }
             }
         } finally { bitmap.recycle() }
     }

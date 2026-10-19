@@ -20,7 +20,7 @@ class ScreenCaptureManager(private val context: Context, private val onProjectio
     private var display: VirtualDisplay? = null
     private var reader: ImageReader? = null
     private val callback = object : MediaProjection.Callback() {
-        override fun onStop() { releaseResources(); onProjectionStopped() }
+        override fun onStop() { projection = null; releaseResources(); onProjectionStopped() }
     }
 
     fun start(resultCode: Int, data: Intent) {
@@ -39,8 +39,11 @@ class ScreenCaptureManager(private val context: Context, private val onProjectio
         val image = reader?.acquireLatestImage() ?: return null
         try {
             val plane = image.planes.firstOrNull() ?: return null
-            val bitmap = Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)
-            bitmap.copyPixelsFromBuffer(plane.buffer)
+            val pixelStride = plane.pixelStride
+            val rowPadding = plane.rowStride - pixelStride * image.width
+            val padded = Bitmap.createBitmap(image.width + rowPadding / pixelStride, image.height, Bitmap.Config.ARGB_8888)
+            padded.copyPixelsFromBuffer(plane.buffer)
+            val bitmap = if (rowPadding == 0) padded else Bitmap.createBitmap(padded, 0, 0, image.width, image.height).also { padded.recycle() }
             return bitmap
         } finally { image.close() }
     }

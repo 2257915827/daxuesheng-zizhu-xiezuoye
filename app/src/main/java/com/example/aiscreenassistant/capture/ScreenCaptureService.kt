@@ -7,6 +7,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
+import android.os.Binder
+import android.graphics.Bitmap
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.aiscreenassistant.MainActivity
@@ -20,6 +22,7 @@ class ScreenCaptureService : Service() {
         private const val ACTION_STOP = "com.example.aiscreenassistant.capture.STOP"
         private const val EXTRA_RESULT_CODE = "result_code"
         private const val EXTRA_RESULT_DATA = "result_data"
+        @Volatile var instance: ScreenCaptureService? = null
 
         fun start(context: Context, resultCode: Int, data: Intent) {
             val intent = Intent(context, ScreenCaptureService::class.java).setAction(ACTION_START)
@@ -30,6 +33,11 @@ class ScreenCaptureService : Service() {
     }
 
     private var manager: ScreenCaptureManager? = null
+    private val localBinder = LocalBinder()
+    inner class LocalBinder : Binder() { fun captureFrame(): Bitmap? = manager?.capture() }
+    fun captureFrame(): Bitmap? = manager?.capture()
+
+    override fun onCreate() { super.onCreate(); instance = this }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -47,9 +55,9 @@ class ScreenCaptureService : Service() {
         startForeground(NOTIFICATION_ID, notification())
         try {
             manager?.close()
-            manager = ScreenCaptureManager(this) { stopCapture("系统已停止录屏授权") }.also {
-                it.start(intent.getIntExtra(EXTRA_RESULT_CODE, 0), resultData)
-            }
+            val newManager = ScreenCaptureManager(this) { stopCapture("系统已停止录屏授权") }
+            manager = newManager
+            newManager.start(intent.getIntExtra(EXTRA_RESULT_CODE, 0), resultData)
             CaptureSession.update(CaptureState.CAPTURING, "正在捕获屏幕；可从通知栏停止")
         } catch (error: Exception) {
             stopCapture("无法启动录屏：${error.message ?: error.javaClass.simpleName}")
@@ -76,6 +84,6 @@ class ScreenCaptureService : Service() {
         .addAction(0, getString(R.string.capture_stop), PendingIntent.getService(this, 1, Intent(this, ScreenCaptureService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
         .build()
 
-    override fun onBind(intent: Intent?): IBinder? = null
-    override fun onDestroy() { manager?.close(); manager = null; super.onDestroy() }
+    override fun onBind(intent: Intent?): IBinder = localBinder
+    override fun onDestroy() { manager?.close(); manager = null; instance = null; super.onDestroy() }
 }
