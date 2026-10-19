@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">AI 屏幕助手</string>
+    <string name="accessibility_description">用于在用户明确授权后读取当前界面并执行已确认的辅助操作。</string>
+</resources>
