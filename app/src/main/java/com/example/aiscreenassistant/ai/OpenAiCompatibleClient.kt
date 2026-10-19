@@ -50,18 +50,21 @@ class OpenAiCompatibleClient(baseUrl: String, private val token: String, private
     suspend fun answerQuestion(bitmap: Bitmap): QuestionAnswer = withContext(Dispatchers.IO) {
         try {
             val image = bitmapToDataUrl(bitmap)
-            val prompt = "分析截图中当前最主要的一道题，只输出 JSON：{\"questionType\":\"MULTIPLE_CHOICE|FILL_IN|SHORT_ANSWER|UNKNOWN\",\"answer\":\"最终答案\",\"confidence\":0到1之间的数字,\"briefReason\":\"可为空，最多一句\"}。支持选择题、填空题、简答题；选择题答案需包含选项标号和对应内容（如 B. ...），填空或简答给出可直接参考/复制的完整答案。不要操作屏幕，不要返回操作指令；题目看不清时 answer 留空且降低 confidence。"
             val payload = buildJsonObject {
                 put("model", JsonPrimitive(model.ifBlank { throw ApiException("未选择模型") }))
                 put("messages", buildJsonArray {
                     add(buildJsonObject {
+                        put("role", JsonPrimitive("system"))
+                        put("content", JsonPrimitive(SYSTEM_PROMPT))
+                    })
+                    add(buildJsonObject {
                         put("role", JsonPrimitive("user"))
                         put("content", buildJsonArray {
-                            add(buildJsonObject { put("type", JsonPrimitive("text")); put("text", JsonPrimitive(prompt)) })
                             add(buildJsonObject { put("type", JsonPrimitive("image_url")); put("image_url", buildJsonObject { put("url", JsonPrimitive(image)) }) })
                         })
                     })
                 })
+                put("max_completion_tokens", JsonPrimitive(256))
             }
             val request = Request.Builder().url("$baseUrl/chat/completions").header("Authorization", "Bearer $token")
                 .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody("application/json; charset=utf-8".toMediaType())).build()
@@ -73,7 +76,10 @@ class OpenAiCompatibleClient(baseUrl: String, private val token: String, private
                     is JsonArray -> content.joinToString("\n") { part -> runCatching { part.jsonObject["text"]?.jsonPrimitive?.content }.getOrNull().orEmpty() }
                     else -> throw ApiException("模型未返回答案内容")
                 }
-                parseAnswer(text)
+                val answer = parseAnswer(text)
+                val cachedTokens = root["usage"]?.jsonObject?.get("prompt_tokens_details")?.jsonObject
+                    ?.get("cached_tokens")?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
+                answer.copy(cacheHitTokens = cachedTokens)
             }
         } finally {
             bitmap.recycle()
@@ -110,6 +116,7 @@ class OpenAiCompatibleClient(baseUrl: String, private val token: String, private
     }
 
     companion object {
+        const val SYSTEM_PROMPT = "你是屏幕题目答案助手。分析截图中当前最主要的一道题，只输出 JSON：{\"questionType\":\"MULTIPLE_CHOICE|FILL_IN|SHORT_ANSWER|UNKNOWN\",\"answer\":\"最终答案\",\"confidence\":0.0,\"briefReason\":\"\"}，confidence 必须是 0 到 1 之间的数字。只给最终答案，不要解释、推导或描述原理；不要操作屏幕或返回操作指令。选择题答案需包含选项标号和内容。若题干可判断且截图可见选项不完整、正确答案确定不在可见选项中，不要从不完整选项中猜选，answer 写“正确答案未显示在截图可见选项中”，并给出较高置信度；若无法判断题目或正确答案则 answer 留空并降低置信度。填空题和简答题给出可直接参考或复制的完整答案。"
         fun normalizeBaseUrl(value: String): String {
             val trimmed = value.trim().trimEnd('/')
             if (trimmed.isBlank()) throw ApiException("请输入 API 地址")

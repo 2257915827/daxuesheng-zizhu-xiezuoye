@@ -10,5 +10,6 @@ data class QuestionAnswer(
     val questionType: QuestionType = QuestionType.UNKNOWN,
     val answer: String = "",
     val confidence: Float = 0f,
-    val briefReason: String = ""
+    val briefReason: String = "",
+    val cacheHitTokens: Int = 0
 )

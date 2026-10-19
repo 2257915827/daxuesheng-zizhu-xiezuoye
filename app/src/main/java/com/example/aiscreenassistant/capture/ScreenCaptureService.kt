@@ -69,7 +69,7 @@ class ScreenCaptureService : Service() {
             val newManager = ScreenCaptureManager(this) { stopCapture("系统已撤销录屏授权") }
             manager = newManager
             newManager.start(intent.getIntExtra(EXTRA_RESULT_CODE, 0), resultData)
-            overlay = FloatingAssistantController(this) { requestAnswer() }.also { it.show() }
+            overlay = FloatingAssistantController(this, onAsk = { requestAnswer() }, onClose = { stopCapture("悬浮助手已关闭，录屏已停止") }).also { it.show() }
             CaptureSession.update(CaptureState.CAPTURING, "悬浮助手已开启；进入题目后点气泡识题")
         } catch (error: Exception) {
             stopCapture("无法启动悬浮助手：${error.message ?: error.javaClass.simpleName}")
